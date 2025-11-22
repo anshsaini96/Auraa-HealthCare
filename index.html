@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BP & Heart Rate Dashboard — Medical Monitor</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- html2pdf for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
+
+  <style>
+    :root{
+      --accent: #2563eb;
+      --accent-2: #6366f1;
+      --danger: #dc2626;
+      --muted: #6b7280;
+      --bg: #f6f9ff;
+      --card: #ffffff;
+      --text: #0f172a;
+      --glass: rgba(255,255,255,0.6);
+      --success: #16a34a;
+    }
+    /* Dark theme variables override */
+    body.dark{
+      --accent: #7c3aed;
+      --accent-2: #8b5cf6;
+      --danger: #fb923c;
+      --muted: #9ca3af;
+      --bg: #071022;
+      --card: #07162a;
+      --text: #e6eef8;
+      --glass: rgba(255,255,255,0.03);
+    }
+
+    /* Basic layout */
+    html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial;}
+    body{background:linear-gradient(180deg,var(--bg),#eef7ff 60%);color:var(--text);padding:20px;}
+    .app{max-width:1100px;margin:12px auto;padding:18px;border-radius:14px;background:linear-gradient(180deg,var(--card),rgba(0,0,0,0.02));box-shadow:0 10px 30px rgba(2,6,23,0.08);}
+
+    header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+    header h1{font-size:20px;margin:0}
+    header .sub{color:var(--muted);font-size:13px}
+
+    .top-controls{display:flex;gap:8px;align-items:center}
+
+    /* Input panel + report grid */
+    .grid{display:grid;grid-template-columns:360px 1fr;gap:18px}
+    @media (max-width:980px){ .grid{grid-template-columns:1fr} }
+
+    .panel{background:var(--card);padding:14px;border-radius:12px;box-shadow:0 6px 20px rgba(2,6,23,0.04)}
+    label{display:block;font-size:13px;margin:8px 0 6px;color:var(--muted)}
+    input[type="text"], input[type="date"], input[type="number"], select{
+      width:100%;padding:10px;border-radius:10px;border:1px solid rgba(15,23,42,0.06);background:transparent;color:inherit;box-sizing:border-box;
+    }
+    .row{display:flex;gap:8px}
+    .row .col{flex:1}
+
+    .btn{background:var(--accent);color:#fff;border:none;padding:10px 12px;border-radius:10px;cursor:pointer;font-weight:600}
+    .btn.secondary{background:transparent;color:var(--accent);border:1px solid rgba(37,99,235,0.12)}
+    .btn.ghost{background:transparent;color:var(--muted);border:1px solid rgba(0,0,0,0.04)}
+    .small{font-size:12px;color:var(--muted)}
+
+    /* Metrics + chart */
+    .metrics{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .metric{background:var(--glass);padding:10px;border-radius:10px;min-width:130px}
+    .metric .label{font-size:12px;color:var(--muted)}
+    .metric .value{font-weight:700;font-size:18px}
+
+    .chart-wrap{height:260px;background:transparent;padding:6px;border-radius:8px}
+
+    table{width:100%;border-collapse:collapse;margin-top:12px;border-radius:8px;overflow:hidden}
+    th,td{padding:10px;text-align:left;border-bottom:1px solid rgba(15,23,42,0.06);font-size:13px}
+    body.dark th, body.dark td{border-bottom:1px solid rgba(255,255,255,0.04)}
+    tr.high{background:linear-gradient(90deg, rgba(252,165,165,0.07), transparent)}
+    tr:hover{background:rgba(0,0,0,0.02)}
+    .status-pill{display:inline-block;padding:6px 8px;border-radius:999px;font-size:12px;color:white}
+
+    .status-normal{background:var(--success)}
+    .status-elev{background:#f59e0b}
+    .status-high{background:var(--danger)}
+
+    .controls-bottom{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:12px}
+    .muted{color:var(--muted)}
+
+    .tooltip{position:relative;display:inline-block}
+    .tooltip .tiptext{visibility:hidden;width:max-content;background:#111;color:#fff;text-align:center;border-radius:6px;padding:6px 8px;position:absolute;z-index:10;bottom:125%;left:50%;transform:translateX(-50%);font-size:12px;white-space:nowrap}
+    .tooltip:hover .tiptext{visibility:visible;opacity:1}
+
+    footer{margin-top:12px;font-size:12px;color:var(--muted);text-align:center}
+  </style>
+</head>
+<body>
+  <div class="app" id="appRoot">
+    <header>
+      <div>
+        <h1>BP & Heart Rate Dashboard</h1>
+        <div class="sub">Pro-level daily tracking · 30-day view · CSV / PDF export</div>
+      </div>
+
+      <div class="top-controls">
+        <div style="display:flex;flex-direction:column;align-items:flex-end">
+          <div class="small">Patient</div>
+          <input id="patientName" type="text" placeholder="Enter patient name (e.g. John Doe)" style="min-width:220px"/>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="csvBtn" class="btn secondary">CSV</button>
+          <button id="pdfBtn" class="btn">PDF</button>
+
+          <button id="nightToggle" class="btn ghost" title="Toggle Dark / Light mode">
+            <span id="modeIcon">🌙</span>&nbsp;<span id="modeText">Dark</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- LEFT: Entry panel -->
+      <div class="panel">
+        <h3 style="margin:0 0 8px 0">Add / Update Daily Reading</h3>
+        <div class="small muted">Click an existing row to edit it. Max 30 unique dates.</div>
+
+        <form id="entryForm" style="margin-top:12px">
+          <label for="date">Date</label>
+          <input id="date" type="date" required/>
+
+          <div class="row">
+            <div class="col">
+              <label for="systolic">Systolic (mm Hg)</label>
+              <input id="systolic" type="number" min="30" max="300" required />
+            </div>
+            <div class="col">
+              <label for="diastolic">Diastolic (mm Hg)</label>
+              <input id="diastolic" type="number" min="30" max="200" required />
+            </div>
+          </div>
+
+          <label for="heartrate">Heart Rate (bpm)</label>
+          <input id="heartrate" type="number" min="30" max="220" required />
+
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn" type="submit">Save</button>
+            <button type="button" id="loadSample" class="btn secondary">Load Sample</button>
+            <button type="button" id="clearAll" class="btn ghost">Clear All</button>
+            <div style="margin-left:auto" class="small muted">Stored locally in your browser</div>
+          </div>
+        </form>
+      </div>
+
+      <!-- RIGHT: Analysis & records -->
+      <div class="panel" id="report">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <h3 style="margin:0">Analysis & Records</h3>
+            <div class="small muted">Summary for up to 30 days · High threshold S ≥ 140 or D ≥ 90</div>
+          </div>
+
+          <div style="text-align:right">
+            <div class="tooltip">
+              <button class="btn ghost" style="padding:8px 10px">Status help</button>
+              <div class="tiptext">Normal = fine · Elevated = monitor closely · High = consult doctor</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:12px" id="analysisArea">
+          <div class="metrics" id="metrics"></div>
+
+          <div class="chart-wrap">
+            <canvas id="bpChart"></canvas>
+          </div>
+
+          <h4 style="margin-top:14px;margin-bottom:6px">Daily Records</h4>
+          <div style="overflow:auto;max-height:340px">
+            <table id="recordsTable">
+              <thead>
+                <tr>
+                  <th style="width:120px">Date</th>
+                  <th style="width:90px">Systolic</th>
+                  <th style="width:90px">Diastolic</th>
+                  <th style="width:170px">Status</th>
+                  <th style="width:110px">Heart Rate</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div class="controls-bottom">
+            <div class="small muted">Tip: Click a row to load it into the form for quick editing.</div>
+            <div style="display:flex;gap:8px">
+              <button id="exportCsv" class="btn secondary">Export CSV</button>
+              <button id="exportPdf" class="btn">Export PDF</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer>Built for demo purposes — not medical advice. Save and review with a clinician for clinical decisions.</footer>
+  </div>
+
+  <script>
+    /***** Configuration & storage keys *****/
+    const STORAGE_KEY = 'bp_records_v3';
+    const NAME_KEY = 'bp_patient_name_v1';
+    const NIGHT_KEY = 'bp_night_mode_v1';
+    const MAX_DAYS = 30;
+    const HIGH_SYST = 140, HIGH_DIA = 90;
+
+    /***** UI references *****/
+    const patientName = document.getElementById('patientName');
+    const dateInp = document.getElementById('date');
+    const systInp = document.getElementById('systolic');
+    const diaInp = document.getElementById('diastolic');
+    const hrInp = document.getElementById('heartrate');
+    const entryForm = document.getElementById('entryForm');
+    const tableBody = document.querySelector('#recordsTable tbody');
+    const metricsDiv = document.getElementById('metrics');
+    const bpChartCtx = document.getElementById('bpChart').getContext('2d');
+    const nightToggle = document.getElementById('nightToggle');
+    const modeIcon = document.getElementById('modeIcon');
+    const modeText = document.getElementById('modeText');
+
+    const csvBtn = document.getElementById('csvBtn');
+    const pdfBtn = document.getElementById('pdfBtn');
+    const exportCsvBtn = document.getElementById('exportCsv');
+    const exportPdfBtn = document.getElementById('exportPdf');
+
+    let records = [];
+
+    /***** Helpers *****/
+    function loadAll(){
+      try{
+        records = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      }catch(e){ records = []; }
+      patientName.value = localStorage.getItem(NAME_KEY) || '';
+      // night mode
+      if(localStorage.getItem(NIGHT_KEY) === '1') setNightMode(true);
+      else setNightMode(false);
+      renderAll();
+    }
+
+    function saveAll(){
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(records.slice(0,MAX_DAYS)));
+    }
+    function saveName(){
+      localStorage.setItem(NAME_KEY, patientName.value.trim());
+    }
+
+    function formatDateISO(d){
+      const dt = new Date(d);
+      if(isNaN(dt)) return d;
+      return dt.toISOString().slice(0,10);
+    }
+
+    function statusFor(rec){
+      if(rec.systolic >= HIGH_SYST || rec.diastolic >= HIGH_DIA) return {text: 'High (consult doctor)', cls: 'status-high'};
+      if(rec.systolic >= 120 || rec.diastolic >= 80) return {text: 'Elevated (monitor)', cls: 'status-elev'};
+      return {text: 'Normal (all good)', cls: 'status-normal'};
+    }
+
+    /***** Chart *****/
+    let bpChart = null;
+    function renderChart(labels, syst, dia){
+      if(bpChart) bpChart.destroy();
+      bpChart = new Chart(bpChartCtx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            { label: 'Systolic', data: syst, borderColor: 'rgba(99,102,241,0.95)', tension:0.25, pointRadius:4, fill:false },
+            { label: 'Diastolic', data: dia, borderColor: 'rgba(37,99,235,0.9)', tension:0.25, pointRadius:4, fill:false }
+          ]
+        },
+        options: {
+          responsive:true,
+          plugins: { legend: { position:'top' } },
+          scales: { y: { beginAtZero:false } }
+        }
+      });
+    }
+
+    /***** Render metrics + table *****/
+    function renderAll(){
+      // sort
+      records.sort((a,b) => new Date(a.date) - new Date(b.date));
+
+      // metrics
+      const count = records.length;
+      const highDays = records.filter(r => r.systolic >= HIGH_SYST || r.diastolic >= HIGH_DIA).length;
+      const avgS = count ? Math.round(records.reduce((s,r)=>s + r.systolic,0)/count) : 0;
+      const avgD = count ? Math.round(records.reduce((s,r)=>s + r.diastolic,0)/count) : 0;
+      const avgHR = count ? Math.round(records.reduce((s,r)=>s + (r.heartRate||0),0)/count) : 0;
+      const maxS = count ? Math.max(...records.map(r=>r.systolic)) : 0;
+      const minS = count ? Math.min(...records.map(r=>r.systolic)) : 0;
+      const maxD = count ? Math.max(...records.map(r=>r.diastolic)) : 0;
+      const minD = count ? Math.min(...records.map(r=>r.diastolic)) : 0;
+
+      metricsDiv.innerHTML = `
+        <div class="metric"><div class="label">Patient</div><div class="value">${(patientName.value || '—')}</div></div>
+        <div class="metric"><div class="label">Entries</div><div class="value">${count}</div></div>
+        <div class="metric"><div class="label">High BP days</div><div class="value" style="color:${highDays? 'var(--danger)':'inherit'}">${highDays}</div></div>
+        <div class="metric"><div class="label">Avg S / D</div><div class="value">${avgS} / ${avgD}</div></div>
+        <div class="metric"><div class="label">Avg HR</div><div class="value">${avgHR} bpm</div></div>
+        <div class="metric"><div class="label">Range S (min / max)</div><div class="value">${minS} / ${maxS}</div></div>
+      `;
+
+      // table
+      tableBody.innerHTML = '';
+      const labels = [], sdata = [], ddata = [];
+      for(const r of records){
+        const tr = document.createElement('tr');
+        if(r.systolic >= HIGH_SYST || r.diastolic >= HIGH_DIA) tr.classList.add('high');
+
+        const st = statusFor(r);
+        const statusHtml = `<span class="status-pill ${st.cls}">${st.text}</span>`;
+        tr.innerHTML = `<td>${formatDateISO(r.date)}</td><td>${r.systolic}</td><td>${r.diastolic}</td><td>${statusHtml}</td><td>${r.heartRate||''}</td>`;
+        tableBody.appendChild(tr);
+
+        // click to edit
+        tr.addEventListener('click', ()=> {
+          dateInp.value = formatDateISO(r.date);
+          systInp.value = r.systolic;
+          diaInp.value = r.diastolic;
+          hrInp.value = r.heartRate || '';
+          window.scrollTo({top:0,behavior:'smooth'});
+        });
+
+        labels.push(formatDateISO(r.date)); sdata.push(r.systolic); ddata.push(r.diastolic);
+      }
+
+      renderChart(labels, sdata, ddata);
+    }
+
+    /***** Form: add / update entry *****/
+    entryForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const d = dateInp.value;
+      const syst = parseInt(systInp.value,10);
+      const dia = parseInt(diaInp.value,10);
+      const hr = parseInt(hrInp.value,10);
+
+      if(!d) return alert('Please choose a date.');
+      if(Number.isNaN(syst) || Number.isNaN(dia) || Number.isNaN(hr)) return alert('Enter valid numbers for systolic, diastolic and heart rate.');
+
+      const idx = records.findIndex(r => formatDateISO(r.date) === d);
+      const obj = { date: d, systolic: syst, diastolic: dia, heartRate: hr };
+
+      if(idx >= 0) records[idx] = obj;
+      else {
+        if(records.length >= MAX_DAYS) return alert('Maximum of 30 records allowed. Remove some first.');
+        records.push(obj);
+      }
+
+      saveAll();
+      renderAll();
+      entryForm.reset();
+    });
+
+    /***** Buttons: sample, clear, load/save name *****/
+    document.getElementById('loadSample').addEventListener('click', ()=>{
+      if(!confirm('Load 14-day sample data and replace existing records?')) return;
+      const today = new Date();
+      const demo = [];
+      for(let i=13;i>=0;i--){
+        const dt = new Date(today); dt.setDate(today.getDate() - i);
+        const syst = 110 + Math.round(Math.random()*40 - 5);
+        const dia = 70 + Math.round(Math.random()*25 - 3);
+        const hr = 60 + Math.round(Math.random()*40 - 5);
+        demo.push({date: dt.toISOString().slice(0,10), systolic: syst, diastolic: dia, heartRate: hr});
+      }
+      records = demo;
+      saveAll();
+      renderAll();
+    });
+
+    document.getElementById('clearAll').addEventListener('click', ()=>{
+      if(!confirm('Delete all saved records?')) return;
+      records = [];
+      saveAll();
+      renderAll();
+    });
+
+    patientName.addEventListener('input', saveName);
+
+    /***** CSV export (safe newline & escaping) *****/
+    function escapeCsvCell(cell){
+      if(cell === null || cell === undefined) return '';
+      const s = String(cell);
+      // If contains comma, newline or quote, wrap in quotes and escape quotes
+      if(/[,"\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+      return s;
+    }
+
+    function downloadCSV(){
+      const hdr = ['Patient','Date','Systolic','Diastolic','Status','Heart Rate'];
+      const rows = [hdr];
+      const pname = patientName.value.trim() || '';
+      records.forEach(r => {
+        const st = statusFor(r).text;
+        rows.push([pname, r.date, r.systolic, r.diastolic, st, r.heartRate]);
+      });
+      const csv = rows.map(row => row.map(escapeCsvCell).join(',')).join('\n');
+      const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(patientName.value || 'Patient')}_BP_Records_${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    csvBtn.addEventListener('click', downloadCSV);
+    exportCsvBtn.addEventListener('click', downloadCSV);
+
+    /***** PDF export using html2pdf (captures report panel) *****/
+    function downloadPDF(){
+      // clone the report panel for a clean print (include patient name and metrics)
+      const origReport = document.getElementById('report');
+      const report = origReport.cloneNode(true);
+
+      // insert patient name at top of cloned report
+      const title = document.createElement('div');
+      title.style.marginBottom = '8px';
+      title.innerHTML = `<strong>Patient:</strong> ${patientName.value || '—'} &nbsp;&nbsp; <small style="color:gray">Generated: ${new Date().toLocaleString()}</small>`;
+      report.insertBefore(title, report.firstChild);
+
+      // If the chart exists, replace the canvas in the clone with a PNG image of the chart
+      try {
+        if (bpChart && typeof bpChart.toBase64Image === 'function') {
+          const chartDataUrl = bpChart.toBase64Image();
+          // find canvas inside cloned report and replace with image
+          const canvasInClone = report.querySelector('canvas');
+          if (canvasInClone && canvasInClone.parentNode) {
+            const img = document.createElement('img');
+            img.src = chartDataUrl;
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            img.style.marginTop = '8px';
+            canvasInClone.parentNode.replaceChild(img, canvasInClone);
+          }
+        }
+      } catch (err) {
+        // If conversion fails, continue — PDF will include the rest of the report
+        console.warn('Could not convert chart to image for PDF:', err);
+      }
+
+      // use html2pdf to print the clone
+      const opt = {
+        margin: 10,
+        filename: `${(patientName.value || 'Patient')}_BP_Report_${new Date().toISOString().slice(0,10)}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      // html2pdf expects a DOM element — we will create a temporary container so styles are applied
+      const wrapper = document.createElement('div');
+      // copy computed styles that can affect layout minimally
+      wrapper.style.fontFamily = getComputedStyle(document.body).fontFamily || 'Inter, sans-serif';
+      wrapper.appendChild(report);
+      document.body.appendChild(wrapper);
+
+      html2pdf().set(opt).from(report).save().then(()=> {
+        // cleanup
+        wrapper.remove();
+      }).catch((err)=>{
+        console.error('PDF export failed:', err);
+        wrapper.remove();
+      });
+    }
+
+    pdfBtn.addEventListener('click', downloadPDF);
+    exportPdfBtn.addEventListener('click', downloadPDF);
+
+    /***** Night mode toggle: icon + text swap *****/
+    function setNightMode(on){
+      document.body.classList.toggle('dark', !!on);
+      localStorage.setItem(NIGHT_KEY, on ? '1' : '0');
+      modeIcon.textContent = on ? '☀️' : '🌙';
+      modeText.textContent = on ? 'Light' : 'Dark';
+      // also slightly change button styles for clarity
+      nightToggle.classList.toggle('btn', on);
+    }
+    nightToggle.addEventListener('click', ()=>{
+      const currentlyDark = document.body.classList.contains('dark');
+      setNightMode(!currentlyDark);
+    });
+
+    /***** Utility: keep date max to today on the input *****/
+    dateInp.max = new Date().toISOString().slice(0,10);
+
+    /***** Init load *****/
+    loadAll();
+  </script>
+</body>
+</html>
+
+
+
+
+
